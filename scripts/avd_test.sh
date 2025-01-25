@@ -183,7 +183,9 @@ run_test() {
 
   # Launch stock emulator
   print_title "* Launching $pkg"
+  "$emu" -list-avds && echo 12345678
   restore_avd
+  "$emu" -list-avds && echo 87654321
   "$emu" @test $emu_args &
   emu_pid=$!
   wait_emu wait_for_bootanim
