@@ -9,6 +9,7 @@ boot_timeout=600
 emu_pid=
 
 export PATH="$PATH:$ANDROID_SDK_ROOT/platform-tools"
+export ANDROID_SDK_HOME=$ANDROID_SDK_ROOT
 
 # We test at least these API levels for the following reason
 
@@ -183,9 +184,7 @@ run_test() {
 
   # Launch stock emulator
   print_title "* Launching $pkg"
-  "$emu" -list-avds && echo 12345678
   restore_avd
-  "$emu" -list-avds && echo 87654321
   "$emu" @test $emu_args &
   emu_pid=$!
   wait_emu wait_for_bootanim
