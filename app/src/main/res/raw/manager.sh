@@ -390,6 +390,7 @@ direct_install_system(){
         mount -t tmpfs -o 'mode=0755' tmpfs "$MIRRORDIR" || return 1
         if is_rootfs; then
             ROOTDIR=/
+            force_bind_mount "/" "$ROOTDIR" || return 1
             mkdir "$SYSTEMDIR"
             force_bind_mount "/system" "$SYSTEMDIR" || return 1
         else
@@ -401,17 +402,16 @@ direct_install_system(){
             else
                 ln -fs ./system_root/system "$SYSTEMDIR"
             fi
+        fi
 
-            # we are modifying system directly so we need to create /sbin if it does not exist
+        # we are modifying system directly so we need to create /sbin if it does not exist
+        if [ ! -d "$ROOTDIR"/sbin ]; then
+            rm -rf "$ROOTDIR"/sbin
+            mkdir "$ROOTDIR"/sbin
             if [ ! -d "$ROOTDIR"/sbin ]; then
-                rm -rf "$ROOTDIR"/sbin
-                mkdir "$ROOTDIR"/sbin
-                if [ ! -d "$ROOTDIR"/sbin ]; then
-                    ui_print "! Can't create tmpfs path /sbin"
-                    return 1;
-                fi
+                ui_print "! Can't create tmpfs path /sbin"
+                return 1;
             fi
-
         fi
 
         # check if /vendor is seperated fs
@@ -441,18 +441,17 @@ direct_install_system(){
         remount_check rw "$VENDORDIR" 0 || { warn_system_ro; return 1; }
         remount_check rw "$ODM_DIR" 0 || { warn_system_ro; return 1; }
 
-        # we are modifying system directly so we need to create /sbin if it does not exist
-        if [ -d "$ROOTDIR" ] && [ ! -d "$ROOTDIR"/sbin ]; then
-            rm -rf "$ROOTDIR"/sbin
-            mkdir "$ROOTDIR"/sbin
-            if [ ! -d "$ROOTDIR"/sbin ]; then
-                ui_print "! Can't create tmpfs path /sbin"
-                return 1;
-            fi
-        fi
-
     fi
 
+    # we are modifying system directly so we need to create /sbin if it does not exist
+    if [ -d "$ROOTDIR" ] && [ ! -d "$ROOTDIR"/sbin ]; then
+        rm -rf "$ROOTDIR"/sbin
+        mkdir "$ROOTDIR"/sbin
+        if [ ! -d "$ROOTDIR"/sbin ]; then
+            ui_print "! Can't create tmpfs path /sbin"
+            return 1;
+        fi
+    fi
 
     ui_print "- Cleaning up enviroment..."
     {
