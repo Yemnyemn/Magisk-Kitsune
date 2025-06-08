@@ -1,0 +1,51 @@
+name: Build Magisk (Kitsune)
+
+on:
+  push:
+    branches:
+      - kitsune
+  pull_request:
+    branches:
+      - kitsune
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      # 1. Checkout & submodules
+      - name: Checkout repo
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      # 2. Bootstrap environment
+      - name: Setup environment
+        run: |
+          chmod +x ./.github/actions/setup
+          ./.github/actions/setup
+
+      # 3. Ensure latest libstdc++
+      - name: Update libstdc++
+        run: |
+          sudo add-apt-repository -y ppa:ubuntu-toolchain-r/test
+          sudo apt-get update
+          sudo apt-get install --only-upgrade -y libstdc++6
+
+      # 4. Release build
+      - name: Build release artifacts
+        run: ./build.py -vr all
+
+      # 5. Debug build
+      - name: Build debug artifacts
+        run: ./build.py -v all
+
+      # 6. Stop Gradle
+      - name: Stop Gradle daemon
+        run: ./gradlew --stop
+
+      # 7. Upload outputs
+      - name: Upload Magisk zips
+        uses: actions/upload-artifact@v3
+        with:
+          name: magisk-artifacts
+          path: out/*.zip
