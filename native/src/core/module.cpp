@@ -215,19 +215,6 @@ public:
     }
 };
 
-class zygisk_node : public node_entry {
-public:
-    explicit zygisk_node(const char *name, bool is64bit) : node_entry(name, DT_REG, this),
-                                                           is64bit(is64bit) {}
-
-    void mount() override {
-        const string src = get_magisk_tmp() + "/magisk"s + (is64bit ? "64" : "32");
-        create_and_mount("zygisk", src, true);
-    }
-
-private:
-    bool is64bit;
-};
 
 static void inject_magisk_bins(dir_node *system) {
     auto bin = system->get_child<inter_node>("bin");
