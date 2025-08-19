@@ -34,13 +34,23 @@ jobs:
           distribution: 'temurin'
           java-version: '17'
 
+      - name: Cache Android SDK
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.android
+            ${{ github.workspace }}/android-sdk
+          key: ${{ runner.os }}-android-sdk-${{ hashFiles('**/build.gradle*', '**/gradle-wrapper.properties') }}
+          restore-keys: |
+            ${{ runner.os }}-android-sdk-
+
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
 
-      - name: Install NDK r26d (for AGP 8.x)
+      - name: Install NDK r25c (required by build.py)
         uses: nttld/setup-ndk@v1
         with:
-          ndk-version: r26d
+          ndk-version: r25c
           add-to-path: true
 
       - name: Set up Rust (stable)
@@ -67,26 +77,48 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-cargo-
 
-      # --- BUILD ---
-      # Prefer the repo's build script if it exists; otherwise just assemble the app release.
-      - name: Build (release only) via build.py if present
-        id: buildpy
-        shell: bash
+      - name: Cache NDK prepared by build.py
+        uses: actions/cache@v4
+        with:
+          path: .ndk
+          key: ${{ runner.os }}-ndk-${{ hashFiles('build.py') }}
+          restore-keys: |
+            ${{ runner.os }}-ndk-
+
+      - name: Cache build outputs (out/)
+        uses: actions/cache@v4
+        with:
+          path: out
+          key: ${{ runner.os }}-out-${{ github.sha }}
+          restore-keys: |
+            ${{ runner.os }}-out-
+
+      # --- PREPARE NDK ---
+      - name: Prepare NDK via build.py
         run: |
-          set -euo pipefail
-          if [[ -f build.py ]]; then
-            echo "Using build.py"
-            # Typical Magisk/Kitsune build: skip tests, build release artifacts only
-            python3 build.py -v all || python3 build.py all
-          else
-            echo "build.py not found; falling back to Gradle"
-          fi
+          python3 build.py ndk
+
+      # --- BUILD ---
+      - name: Build (release only) via build.py
+        id: buildpy
+        run: |
+          echo "::group::Build with build.py"
+          start=$(date +%s)
+          python3 build.py -v all
+          end=$(date +%s)
+          echo "Build.py duration: $((end-start)) seconds"
+          echo "::endgroup::"
 
       - name: Build (release only) via Gradle fallback
-        if: steps.buildpy.outcome == 'failure' || steps.buildpy.outcome == 'skipped'
+        if: steps.buildpy.outcome == 'failure'
         run: |
+          echo "::group::Gradle Fallback Build"
+          start=$(date +%s)
           chmod +x gradlew || true
           ./gradlew :app:assembleRelease -x test -x lint --no-daemon --stacktrace
+          end=$(date +%s)
+          echo "Gradle build duration: $((end-start)) seconds"
+          echo "::endgroup::"
 
       # --- ARTIFACTS ---
       - name: Locate artifacts
