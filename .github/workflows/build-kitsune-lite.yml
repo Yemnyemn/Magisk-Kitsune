@@ -1,13 +1,12 @@
-name: Build Kitsune 27.2-4 (SuList, no Zygisk, no x86, no stub)
+name: Build Kitsune 27.2-4 Lite
 
 on:
   workflow_dispatch:
   push:
-    branches: [ main, master ]
-    tags: [ "v**", "27.*" ]
+    tags: [ "v*" ]
 
 permissions:
-  contents: read
+  contents: write
 
 env:
   JAVA_VERSION: "17"
@@ -50,118 +49,89 @@ jobs:
           echo "${ANDROID_SDK_ROOT}/platform-tools" >> $GITHUB_PATH
           echo "${ANDROID_SDK_ROOT}/build-tools/${BUILD_TOOLS}" >> $GITHUB_PATH
 
-      - name: Show tree (top level)
-        run: |
-          pwd
-          ls -la
-
-      - name: Apply Kitsune-Lite patches (no Zygisk/DenyList, enforce SuList, no x86/x64, no stub)
-        shell: bash
+      - name: Apply Lite patches
         run: |
           set -euxo pipefail
+          # Hapus test
+          rm -rf app/src/test app/src/androidTest
+          find . -type d -name test -exec rm -rf {} + || true
+          find . -type d -name androidTest -exec rm -rf {} + || true
 
-          # --- 0) Cari folder app & script patcher kalau ada ---
-          APP_DIR=$(git ls-files | awk -F/ '/^app\/src\/main\//{print $1"/"$2"/"$3}' | head -n1 || true)
-          APP_DIR=${APP_DIR:-app/src/main}
-          RES_DIR="${APP_DIR}/res"
-          VAL_DIR="${RES_DIR}/values"
-
-          # --- 1) Sembunyikan toggle Zygisk & menu DenyList di UI (hapus preference) ---
-          # Hilangkan baris yang mengandung key="zygisk" atau key="denylist" di semua XML res/xml
-          if ls "${RES_DIR}/xml"/*.xml >/dev/null 2>&1; then
-            for f in ${RES_DIR}/xml/*.xml; do
+          # Hapus Zygisk & Denylist di XML
+          if ls app/src/main/res/xml/*.xml >/dev/null 2>&1; then
+            for f in app/src/main/res/xml/*.xml; do
               sed -i -E '/key *= *"zygisk"/d;/key *= *"denylist"/d' "$f" || true
-            done
-          fi
-
-          # Opsional: singkirkan item Zygisk/DenyList yang nongol sebagai teks judul
-          if ls "${RES_DIR}/xml"/*.xml >/dev/null 2>&1; then
-            for f in ${RES_DIR}/xml/*.xml; do
               sed -i -E '/Zygisk/d;/Deny\s*List/d;/DenyList/d' "$f" || true
             done
           fi
 
-          # --- 2) Paksa Enforce SuList = true (tanpa toggle) ---
-          mkdir -p "${VAL_DIR}"
-          # Buat file bool override; jika app membaca dari resources, ini memaksa default 'true'
-          cat > "${VAL_DIR}/kitsune_sulist_enforce.xml" << 'EOF'
+          # Enforce SuList
+          mkdir -p app/src/main/res/values
+          cat > app/src/main/res/values/kitsune_sulist_enforce.xml << 'EOF'
           <resources>
               <bool name="config_enforce_sulist">true</bool>
           </resources>
           EOF
 
-          # Coba “matikan” preferensi/feature flag via Gradle buildConfigField/resValue juga
-          # (aman jika tidak dipakai — diabaikan)
+          # ABI ARM only + hapus debug build
           if ls app/build.gradle* >/dev/null 2>&1; then
-            sed -i -E '/android *\{/,/\}/ {
-              /defaultConfig *\{/ a\
-\        buildConfigField("boolean","ZYGISK_ENABLED_DEFAULT","false")\
-\        buildConfigField("boolean","ENFORCE_SULIST_DEFAULT","true")\
-\        resValue "bool","config_enforce_sulist","true"
-            }' app/build.gradle* || true
-          fi
-
-          # --- 3) Hapus ABI x86/x86_64 dari APK ---
-          if ls app/build.gradle* >/dev/null 2>&1; then
-            # Tambahkan abiFilters untuk hanya arm/arm64, dan exclude x86/x86_64 dari packaging
+            sed -i -E '/signingConfigs\s*\{/,/}/d' app/build.gradle || true
+            sed -i -E '/buildTypes\s*\{/,/}/d' app/build.gradle || true
             awk '{
               print $0
             } /android *\{/ && !p { p=1; print "    defaultConfig {"; print "        ndk {"; print "            abiFilters \"armeabi-v7a\", \"arm64-v8a\""; print "        }"; print "    }"; print "    packaging { jniLibs { excludes += [\"**/x86/**\",\"**/x86_64/**\"] } }"; }' \
-              app/build.gradle* > app/build.gradle.patched || true
+              app/build.gradle > app/build.gradle.patched || true
             if [ -s app/build.gradle.patched ]; then mv app/build.gradle.patched app/build.gradle; fi
-
-            # Bersih-bersih folder JNI x86/x86_64 bila ada arsip prebuilt
-            find app -type d \( -name x86 -o -name x86_64 \) -print -exec rm -rf {} + || true
+            find app -type d \( -name x86 -o -name x86_64 \) -exec rm -rf {} + || true
           fi
 
-          # --- 4) Batasi build native hanya ARM (kalau ada script daftar target) ---
+          # build.py target ARM only
           if [ -f build.py ]; then
             sed -i -E 's/\[ *"arm" *, *"arm64" *, *"x86" *, *"x64" *\]/["arm","arm64"]/g' build.py || true
-            sed -i -E 's/\[ *"x86" *, *"x64" *\]|\[ *"x86_64" *\]//g' build.py || true
           fi
 
-          # --- 5) Hapus modul stub dari settings.gradle dan dependency terkait ---
+          # Hapus modul stub
           if ls settings.gradle* >/dev/null 2>&1; then
             sed -i -E 's/include *\(":stub"\)//g' settings.gradle* || true
           fi
-
-          # --- 6) Cegah penyematan stub di boot_patch.sh (jika ada) ---
           PATCH_SH=$(git ls-files | grep -E 'boot_patch\.sh|scripts/boot_patch\.sh' | head -n1 || true)
           if [ -n "$PATCH_SH" ]; then
             sed -i -E '/stub|magisk\.apk|install_apk|PLACEHOLDER_APK/s/^/# REMOVED: /' "$PATCH_SH" || true
           fi
 
-          # --- 7) Nonaktifkan jejak Zygisk di kode (soft guard; tidak fatal bila path tak cocok) ---
-          # Matikan flag default Zygisk jika ada constants/Config*.kt
-          for K in $(git ls-files | grep -E 'Config.*\.kt|Constants.*\.kt|Settings.*\.kt' || true); do
-            sed -i -E 's/(ZYGISK_ENABLED_DEFAULT *[:=] *)true/\1false/g' "$K" || true
-            sed -i -E 's/(ENFORCE_SULIST_DEFAULT *[:=] *)false/\1true/g' "$K" || true
-          done
-
-          # --- 8) Pastikan gradlew executable ---
-          chmod +x ./gradlew || true
-
-      - name: Build (APK release)
+      - name: Generate temporary keystore
         run: |
-          ./gradlew --no-daemon clean :app:assembleRelease
+          keytool -genkey -v \
+            -keystore release.jks \
+            -storepass github \
+            -keypass github \
+            -alias githubkey \
+            -keyalg RSA \
+            -keysize 2048 \
+            -validity 10000 \
+            -dname "CN=GitHub,O=CI,C=US"
 
-      - name: Build native/ZIP (jika tersedia)
+      - name: Build Release APK (signed)
+        run: |
+          ./gradlew --no-daemon clean :app:assembleRelease -x test \
+            -Pandroid.injected.signing.store.file=release.jks \
+            -Pandroid.injected.signing.store.password=github \
+            -Pandroid.injected.signing.key.alias=githubkey \
+            -Pandroid.injected.signing.key.password=github
+          rm -rf app/build/outputs/apk/debug || true
+
+      - name: Build native/ZIP (jika ada)
         run: |
           if [ -f build.py ]; then
             python3 build.py -v 27.2 --release || true
-          else
-            echo "build.py not found, skipping native ZIP build."
           fi
 
       - name: Collect artifacts
-        id: collect
         run: |
           mkdir -p artifacts
-          # APK
-          find app/build/outputs -type f -name "*release*.apk" -print -exec cp -f {} artifacts/ \; || true
-          # ZIP hasil native/installer (jika ada)
-          find . -maxdepth 3 -type f -name "*.zip" -print -exec cp -f {} artifacts/ \; || true
-          # Catat list
+          find app/build/outputs -type f -name "*release*.apk" -exec cp -f {} artifacts/ \; || true
+          find . -maxdepth 3 -type f -name "*.zip" -exec cp -f {} artifacts/ \; || true
+          find artifacts -type f -iname "*debug*.apk" -delete || true
           ls -la artifacts || true
 
       - name: Upload artifacts
@@ -169,4 +139,23 @@ jobs:
         with:
           name: magisk-kitsune-lite-build
           path: artifacts
-          if-no-files-found: warn
+          if-no-files-found: error
+
+      - name: Create GitHub Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          name: Release ${{ github.ref_name }}
+          tag_name: ${{ github.ref_name }}
+          body: |
+            Automated Lite build for ${{ github.ref_name }}
+
+            ✅ Zygisk & DenyList removed  
+            ✅ Enforce SuList  
+            ✅ ARM only (armeabi-v7a, arm64-v8a)  
+            ✅ Stub removed  
+            ✅ Debug build removed  
+            ✅ Signed Release APK (new keystore generated per build)  
+          files: artifacts/*
+          draft: false
+          prerelease: false
